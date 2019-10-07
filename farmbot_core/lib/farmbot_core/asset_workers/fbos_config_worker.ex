@@ -8,7 +8,7 @@ defimpl FarmbotCore.AssetWorker, for: FarmbotCore.Asset.FbosConfig do
   require Logger
   require FarmbotCore.Logger
   alias FarmbotCeleryScript.AST
-  alias FarmbotCore.{Asset.FbosConfig, BotState, Config}
+  alias FarmbotCore.{Asset, Asset.FbosConfig, BotState, Config}
   import FarmbotFirmware.PackageUtils, only: [package_to_string: 1]
 
   @firmware_flash_attempt_threshold Application.get_env(:farmbot_core, __MODULE__)[:firmware_flash_attempt_threshold]
@@ -19,6 +19,9 @@ defimpl FarmbotCore.AssetWorker, for: FarmbotCore.Asset.FbosConfig do
     firmware_flash_attempt_threshold: :infinity
   ]
   """
+
+  @flash_firmware_rpc_id "FlAsHfIrMwArE"
+  @boot_sequence_rpc_id "bOoTSeQuEnCe"
 
   @impl FarmbotCore.AssetWorker
   def preload(%FbosConfig{}), do: []
@@ -36,22 +39,30 @@ defimpl FarmbotCore.AssetWorker, for: FarmbotCore.Asset.FbosConfig do
     if Config.get_config_value(:bool, "settings", "firmware_needs_flash") do
       Config.update_config_value(:bool, "settings", "firmware_needs_open", false)
     end
+    %{informational_settings: %{idle: idle, firmware_version: fw_version}} = BotState.subscribe()
+
     state = %{
       fbos_config: fbos_config, 
+      firmware_flash_complete: false,
       firmware_flash_attempts: 0, 
-      firmware_flash_attempt_threshold: @firmware_flash_attempt_threshold
+      firmware_flash_attempt_threshold: @firmware_flash_attempt_threshold,
+      firmware_idle: idle || false,
+      firmware_version: fw_version,
+      boot_sequence_started: nil,
     }
-    {:ok, state, 0}
+    send self(), :maybe_flash_firmware
+    send self(), :execute_boot_sequence
+    {:ok, state}
   end
 
   @impl GenServer
-  def handle_info({:step_complete, _, :ok}, state) do
+  def handle_info({:step_complete, @flash_firmware_rpc_id, :ok}, state) do
     Config.update_config_value(:bool, "settings", "firmware_needs_flash", false)
     Config.update_config_value(:bool, "settings", "firmware_needs_open", true)
-    {:noreply, state}
+    {:noreply, %{state | firmware_flash_complete: true}}
   end
 
-  def handle_info({:step_complete, _, {:error, reason}}, %{firmware_flash_attempts: tries, firmware_flash_attempt_threshold: thresh} = state)
+  def handle_info({:step_complete, @flash_firmware_rpc_id, {:error, reason}}, %{firmware_flash_attempts: tries, firmware_flash_attempt_threshold: thresh} = state)
   when tries >= thresh do
     FarmbotCore.Logger.error 1, """
     Failed flashing firmware: #{reason} 
@@ -59,10 +70,10 @@ defimpl FarmbotCore.AssetWorker, for: FarmbotCore.Asset.FbosConfig do
     """
     Config.update_config_value(:bool, "settings", "firmware_needs_flash", false)
     Config.update_config_value(:bool, "settings", "firmware_needs_open", false)
-    {:noreply, %{state | firmware_flash_attempts: 0}}
+    {:noreply, %{state | firmware_flash_attempts: 0, firmware_flash_complete: false}}
   end
 
-  def handle_info({:step_complete, _, {:error, reason}}, %{fbos_config: %FbosConfig{} = fbos_config} = state) do
+  def handle_info({:step_complete, @flash_firmware_rpc_id, {:error, reason}}, %{fbos_config: %FbosConfig{} = fbos_config} = state) do
     FarmbotCore.Logger.error 1, """
     Error flashing firmware: #{reason} 
     Trying again in 5 seconds
@@ -70,33 +81,90 @@ defimpl FarmbotCore.AssetWorker, for: FarmbotCore.Asset.FbosConfig do
     Config.update_config_value(:bool, "settings", "firmware_needs_flash", true)
     Config.update_config_value(:bool, "settings", "firmware_needs_open", false)
     Process.sleep(5000)
-    _ = maybe_flash_firmware(state, fbos_config.firmware_hardware, fbos_config.firmware_hardware)
-    {:noreply, %{state | firmware_flash_attempts: state.firmware_flash_attempts + 1}}
+    flash_complete? = maybe_flash_firmware(state, fbos_config.firmware_hardware, fbos_config.firmware_hardware)
+    {:noreply, %{state | firmware_flash_attempts: state.firmware_flash_attempts + 1, firmware_flash_complete: flash_complete?}}
   end
 
-  def handle_info(:timeout, %{fbos_config: %FbosConfig{} = fbos_config} = state) do
+  def handle_info({:step_complete, @boot_sequence_rpc_id, :ok}, state) do
+    FarmbotCore.Logger.success 3, "bootup sequence complete"
+    {:noreply, state}
+  end
+
+  def handle_info({:step_complete, @boot_sequence_rpc_id, {:error, reason}}, state) do
+    FarmbotCore.Logger.error 3, "bootup sequence failed: #{inspect(reason)}"
+    {:noreply, state}
+  end
+
+  def handle_info(:maybe_flash_firmware, %{fbos_config: %FbosConfig{} = fbos_config} = state) do
     FarmbotCore.Logger.debug 3, "Got initial fbos config"
     set_config_to_state(fbos_config)
-    _ = maybe_flash_firmware(state, fbos_config.firmware_hardware, fbos_config.firmware_hardware)
+    flash_complete? = maybe_flash_firmware(state, fbos_config.firmware_hardware, fbos_config.firmware_hardware)
+    {:noreply, %{state | firmware_flash_complete: flash_complete?}}
+  end
+
+  # We don't need to execute the boot sequence if it's unset.
+  def handle_info(:execute_boot_sequence, %{fbos_config: %{boot_sequence_id: nil}} = state) do
+    {:noreply, state}
+  end
+
+  # Don't execute boot sequence until firmware flash is complete
+  def handle_info(:execute_boot_sequence, %{firmware_flash_complete: false} = state) do
+    Process.send_after(self(), :execute_boot_sequence, 5000)
+    {:noreply, state}
+  end
+
+  # Don't execute boot sequence until firmware is booted with the correct version
+  def handle_info(:execute_boot_sequence, %{firmware_version: nil} = state) do
+    Process.send_after(self(), :execute_boot_sequence, 5000)
+    {:noreply, state}
+  end
+
+  # Don't execute boot sequence until firmware is idle
+  def handle_info(:execute_boot_sequence, %{firmware_idle: false} = state) do
+    Process.send_after(self(), :execute_boot_sequence, 1000)
+    {:noreply, state} 
+  end
+
+  def handle_info(:execute_boot_sequence, %{fbos_config: %{boot_sequence_id: id}} = state) do
+    case Asset.get_sequence(id) do
+      nil ->
+        Process.send_after(self(), :execute_boot_sequence, 5000)
+        {:noreply, state}
+        _ ->
+        FarmbotCore.Logger.busy 3, "Executing bootup sequence"
+        FarmbotCeleryScript.execute(execute_ast(id), @boot_sequence_rpc_id)
+        {:noreply, %{state | boot_sequence_started: DateTime.utc_now()}}
+    end
+  end
+
+  def handle_info({BotState, %{changes: %{informational_settings: %{changes: %{idle: idle}}}}}, state) do
+    {:noreply, %{state | firmware_idle: idle}}
+  end
+
+  def handle_info({BotState, %{changes: %{informational_settings: %{changes: %{firmware_version: fw_version}}}}}, state) do
+    {:noreply, %{state | firmware_version: fw_version}}
+  end
+
+  def handle_info({BotState, _}, state) do
     {:noreply, state}
   end
 
   @impl GenServer
   def handle_cast({:new_data, new_fbos_config}, %{fbos_config: %FbosConfig{} = old_fbos_config} = state) do
     _ = set_config_to_state(new_fbos_config, old_fbos_config)
-    _ = maybe_flash_firmware(state, new_fbos_config.firmware_hardware, old_fbos_config.firmware_hardware)
-    {:noreply, %{state | fbos_config: new_fbos_config}}
+    flash_complete? = maybe_flash_firmware(state, new_fbos_config.firmware_hardware, old_fbos_config.firmware_hardware)
+    {:noreply, %{state | fbos_config: new_fbos_config, firmware_flash_complete: flash_complete?}}
   end
 
   def maybe_flash_firmware(_state, "none", _old_hardware) do
     Config.update_config_value(:bool, "settings", "firmware_needs_flash", false)
     Config.update_config_value(:bool, "settings", "firmware_needs_open", true)
-    :ok
+    true
   end
 
   def maybe_flash_firmware(_state, nil, _old_hardware) do
     FarmbotCore.Logger.warn 1, "Firmware hardware unset. Not flashing"
-    :ok
+    true
   end
 
   def maybe_flash_firmware(_state, new_hardware, old_hardware) do
@@ -107,17 +175,19 @@ defimpl FarmbotCore.AssetWorker, for: FarmbotCore.Asset.FbosConfig do
         Config.update_config_value(:bool, "settings", "firmware_needs_flash", false)
         new_hardware
         |> fbos_config_to_flash_firmware_rpc()
-        |> FarmbotCeleryScript.execute(make_ref())
+        |> FarmbotCeleryScript.execute(@flash_firmware_rpc_id)
+        false
       
       new_hardware != old_hardware ->
         FarmbotCore.Logger.warn 1, "Firmware hardware change from #{package_to_string(old_hardware)} to #{package_to_string(new_hardware)}"
         new_hardware
         |> fbos_config_to_flash_firmware_rpc()
-        |> FarmbotCeleryScript.execute(make_ref())
+        |> FarmbotCeleryScript.execute(@flash_firmware_rpc_id)
+        false
 
       true ->
         # Config.update_config_value(:bool, "settings", "firmware_needs_open", true)
-        :ok
+        true
     end
   end
 
@@ -208,5 +278,11 @@ defimpl FarmbotCore.AssetWorker, for: FarmbotCore.Asset.FbosConfig do
     AST.Factory.new()
     |> AST.Factory.rpc_request("FbosConfig")
     |> AST.Factory.flash_firmware(firmware_hardware)
+  end
+
+  def execute_ast(id) do
+    AST.Factory.new()
+    |> AST.Factory.rpc_request("FbosConfig")
+    |> AST.Factory.execute(id)
   end
 end

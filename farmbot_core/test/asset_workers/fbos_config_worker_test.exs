@@ -24,7 +24,7 @@ defmodule FarmbotCore.FbosConfigWorkerTest do
       })
 
     {:ok, pid} = AssetWorker.start_link(conf)
-    send(pid, :timeout)
+    send(pid, :maybe_flash_firmware)
 
     state = BotState.subscribe()
 
