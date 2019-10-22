@@ -101,6 +101,9 @@ defmodule FarmbotCore.BotStateNG.McuParams do
     field(:movement_stall_sensitivity_x, :float)
     field(:movement_stall_sensitivity_y, :float)
     field(:movement_stall_sensitivity_z, :float)
+    field(:movement_microsteps_x, :float)
+    field(:movement_microsteps_y, :float)
+    field(:movement_microsteps_z, :float)
   end
 
   def new() do
@@ -204,7 +207,10 @@ defmodule FarmbotCore.BotStateNG.McuParams do
       movement_motor_current_z: mcu_params.movement_motor_current_z,
       movement_stall_sensitivity_x: mcu_params.movement_stall_sensitivity_x,
       movement_stall_sensitivity_y: mcu_params.movement_stall_sensitivity_y,
-      movement_stall_sensitivity_z: mcu_params.movement_stall_sensitivity_z
+      movement_stall_sensitivity_z: mcu_params.movement_stall_sensitivity_z,
+      movement_microsteps_x: mcu_params.movement_microsteps_x,
+      movement_microsteps_y: mcu_params.movement_microsteps_y,
+      movement_microsteps_z: mcu_params.movement_microsteps_z
     }
   end
 
@@ -304,7 +310,10 @@ defmodule FarmbotCore.BotStateNG.McuParams do
       :movement_motor_current_z,
       :movement_stall_sensitivity_x,
       :movement_stall_sensitivity_y,
-      :movement_stall_sensitivity_z
+      :movement_stall_sensitivity_z,
+      :movement_microsteps_x,
+      :movement_microsteps_y,
+      :movement_microsteps_z
     ])
   end
 end
