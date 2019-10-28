@@ -4,7 +4,7 @@ defmodule FarmbotCore.AssetSupervisor do
   """
 
   use Supervisor
-  alias FarmbotCore.{Asset.Repo, AssetWorker}
+  alias FarmbotCore.{Asset, Asset.Repo, AssetWorker}
 
   @doc "List all children for an asset"
   def list_children(kind) do
@@ -21,6 +21,11 @@ defmodule FarmbotCore.AssetSupervisor do
     |> Enum.find(fn {sup_id, _pid, _type, _} ->
       sup_id == id
     end)
+  end
+
+  def fbos_config_state() do
+    {_id, pid, _, _} = whereis_child(Asset.fbos_config())
+    :sys.get_state(pid)
   end
 
   # TODO(Connor) does this really belong here?
