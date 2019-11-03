@@ -3,6 +3,7 @@ defmodule FarmbotOS.Platform.Target.Network do
   use GenServer, shutdown: 10_000
   require Logger
   require FarmbotCore.Logger
+  require FarmbotTelemetry
 
   import FarmbotOS.Platform.Target.Network.Utils,
     only: [
@@ -21,9 +22,13 @@ defmodule FarmbotOS.Platform.Target.Network do
     %{
       type: CaptivePortal,
       wifi: %{
-        ssid: build_hostap_ssid(),
-        mode: :host,
-        key_mgmt: :none
+        networks: [
+          %{
+            ssid: build_hostap_ssid(),
+            mode: :ap,
+            key_mgmt: :none
+          }
+        ]
       },
       ipv4: %{
         method: :static,
@@ -123,6 +128,7 @@ defmodule FarmbotOS.Platform.Target.Network do
         end
 
         vintage_net_config = to_vintage_net(config)
+        FarmbotTelemetry.event(:network, :interface_configure, nil, interface: ifname)
         configure_result = VintageNet.configure(config.name, vintage_net_config)
 
         FarmbotCore.Logger.success(3, "#{config.name} setup: #{inspect(configure_result)}")
@@ -137,12 +143,14 @@ defmodule FarmbotOS.Platform.Target.Network do
 
   def handle_info({VintageNet, ["interface", ifname, "lower_up"], _old, false, _meta}, state) do
     FarmbotCore.Logger.error(1, "Interface #{ifname} disconnected from access point")
+    FarmbotTelemetry.event(:network, :interface_disconnect, nil, interface: ifname)
     state = start_network_not_found_timer(state)
     {:noreply, state}
   end
 
   def handle_info({VintageNet, ["interface", ifname, "lower_up"], _old, true, _meta}, state) do
     FarmbotCore.Logger.success(1, "Interface #{ifname} connected access point")
+    FarmbotTelemetry.event(:network, :interface_connect, nil, interface: ifname)
     state = cancel_network_not_found_timer(state)
     {:noreply, state}
   end
@@ -152,6 +160,7 @@ defmodule FarmbotOS.Platform.Target.Network do
         state
       ) do
     FarmbotCore.Logger.warn(1, "Interface #{ifname} connected to local area network")
+    FarmbotTelemetry.event(:network, :lan_connect, nil, interface: ifname)
     {:noreply, state}
   end
 
@@ -161,6 +170,7 @@ defmodule FarmbotOS.Platform.Target.Network do
       ) do
     FarmbotCore.Logger.warn(1, "Interface #{ifname} connected to internet")
     state = cancel_network_not_found_timer(state)
+    FarmbotTelemetry.event(:network, :wan_connect, nil, interface: ifname)
     {:noreply, %{state | first_connect?: false}}
   end
 
@@ -170,6 +180,7 @@ defmodule FarmbotOS.Platform.Target.Network do
       ) do
     FarmbotCore.Logger.warn(1, "Interface #{ifname} disconnected from the internet: #{ifstate}")
     FarmbotExt.AMQP.ConnectionWorker.close()
+    FarmbotTelemetry.event(:network, :wan_disconnect, nil, interface: ifname)
 
     if state.network_not_found_timer do
       {:noreply, state}
@@ -183,6 +194,36 @@ defmodule FarmbotOS.Platform.Target.Network do
         {VintageNet, ["interface", _, "wifi", "access_points"], _old, _new, _meta},
         state
       ) do
+    {:noreply, state}
+  end
+
+  def handle_info(
+        {VintageNet, ["interface", _ifname, "eap_status"], _old, %{status: :success} = eap_status,
+         _meta},
+        state
+      ) do
+    FarmbotCore.Logger.debug(3, """
+    Farmbot successfully completed EAP Authentication.
+    #{inspect(eap_status, limit: :infinity)}
+    """)
+
+    {:noreply, state}
+  end
+
+  def handle_info(
+        {VintageNet, ["interface", _ifname, "eap_status"], _old, %{status: :failure}, _meta},
+        state
+      ) do
+    FarmbotCore.Logger.error(1, """
+    Farmbot was unable to assosiate with the EAP network.
+    Please check the identity, password and method of connection
+    """)
+
+    FarmbotOS.System.factory_reset("""
+    Farmbot was unable to assosiate with the EAP network. 
+    Please check the identity, password and method of connection
+    """)
+
     {:noreply, state}
   end
 
@@ -270,6 +311,7 @@ defmodule FarmbotOS.Platform.Target.Network do
   end
 
   def reset_ntp do
+    FarmbotTelemetry.event(:ntp, :reset)
     ntp_server_1 = Config.get_config_value(:string, "settings", "default_ntp_server_1")
     ntp_server_2 = Config.get_config_value(:string, "settings", "default_ntp_server_2")
 

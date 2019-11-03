@@ -21,6 +21,12 @@ defmodule FarmbotCore.FirmwareSideEffects do
   end
 
   @impl FarmbotFirmware.SideEffects
+  def handle_axis_timeout(axis) do
+    FarmbotCore.Logger.error 1, "Axis #{axis} timed out waiting for movement to complete"
+    :noop
+  end
+
+  @impl FarmbotFirmware.SideEffects
   def handle_home_complete(_) do
     :noop
   end
@@ -35,6 +41,9 @@ defmodule FarmbotCore.FirmwareSideEffects do
     :ok = BotState.set_encoders_scaled(x, y, z)
   end
 
+  # this is a bug in the firmware code i think
+  def handle_encoders_scaled([]), do: :noop
+  
   @impl FarmbotFirmware.SideEffects
   def handle_encoders_raw(x: x, y: y, z: z) do
     :ok = BotState.set_encoders_raw(x, y, z)

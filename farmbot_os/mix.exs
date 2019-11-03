@@ -69,12 +69,13 @@ defmodule FarmbotOS.MixProject do
   defp deps do
     [
       # Farmbot stuff
+      {:farmbot_telemetry, path: "../farmbot_telemetry", env: Mix.env()},
       {:farmbot_core, path: "../farmbot_core", env: Mix.env()},
       {:farmbot_ext, path: "../farmbot_ext", env: Mix.env()},
 
       # Configurator stuff
       {:cors_plug, "~> 2.0"},
-      {:plug_cowboy, "~> 2.0"},
+      {:plug_cowboy, "~> 2.1"},
       {:phoenix_html, "~> 2.13"},
 
       # Nerves stuff.
@@ -88,7 +89,7 @@ defmodule FarmbotOS.MixProject do
       {:excoveralls, "~> 0.10", only: [:test], targets: [:host]},
       {:dialyxir, "~> 1.0.0-rc.3", only: [:dev], targets: [:host], runtime: false},
       {:ex_doc, "~> 0.19", only: [:dev], targets: [:host], runtime: false},
-      {:elixir_make, "~> 0.5", runtime: false},
+      {:elixir_make, "~> 0.6", runtime: false},
 
       # Data collection
       {:nimble_csv, "~> 0.6.0", runtime: false},
@@ -100,10 +101,11 @@ defmodule FarmbotOS.MixProject do
       {:nerves_firmware_ssh, "~> 0.4", targets: @all_targets},
       {:circuits_gpio, "~> 0.4", targets: @all_targets},
       {:toolshed, "~> 0.2", targets: @all_targets},
-      {:vintage_net, "~> 0.5", targets: @all_targets},
+      {:vintage_net, "~> 0.6", targets: @all_targets},
       {:mdns_lite, "~> 0.4", targets: @all_targets},
       {:busybox, "~> 0.1", targets: @all_targets},
-      {:farmbot_system_rpi3, "1.8.0-farmbot.2", runtime: false, targets: :rpi3},
+      {:nerves_system_br, "~> 1.9", override: true, runtime: false, targets: @all_targets},
+      {:farmbot_system_rpi3, "1.9.0-farmbot.1", runtime: false, targets: :rpi3},
       {:farmbot_system_rpi0, "1.8.0-farmbot.0", runtime: false, targets: :rpi0},
       {:farmbot_system_rpi, "1.8.0-farmbot.0", runtime: false, targets: :rpi}
     ]

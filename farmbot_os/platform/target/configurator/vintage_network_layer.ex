@@ -1,4 +1,5 @@
 defmodule FarmbotOS.Platform.Target.Configurator.VintageNetworkLayer do
+  require FarmbotCore.Logger
   @behaviour FarmbotOS.Configurator.NetworkLayer
 
   @impl FarmbotOS.Configurator.NetworkLayer
@@ -15,8 +16,7 @@ defmodule FarmbotOS.Platform.Target.Configurator.VintageNetworkLayer do
 
   @impl FarmbotOS.Configurator.NetworkLayer
   def scan(ifname) do
-    _ = VintageNet.scan(ifname)
-    [{_, aps}] = VintageNet.get_by_prefix(["interface", ifname, "wifi", "access_points"])
+    {:ok, aps} = do_scan(ifname)
 
     Enum.map(aps, fn %{bssid: bssid, ssid: ssid, signal_percent: signal, flags: flags} ->
       %{
@@ -35,11 +35,29 @@ defmodule FarmbotOS.Platform.Target.Configurator.VintageNetworkLayer do
     end)
   end
 
+  defp do_scan(ifname) do
+    _ = VintageNet.scan(ifname)
+
+    case VintageNet.get_by_prefix(["interface", ifname, "wifi", "access_points"]) do
+      [{_, []}] ->
+        FarmbotCore.Logger.debug(3, "AP list was empty. Trying again")
+        Process.sleep(100)
+        do_scan(ifname)
+
+      [{_, [_ | _] = aps}] ->
+        {:ok, aps}
+
+      _ ->
+        :error
+    end
+  end
+
   defp flags_to_security([:wpa2_psk_ccmp | _]), do: "WPA-PSK"
   defp flags_to_security([:wpa2_psk_ccmp_tkip | _]), do: "WPA-PSK"
   defp flags_to_security([:wpa_psk_ccmp | _]), do: "WPA-PSK"
   defp flags_to_security([:wpa_psk_ccmp_tkip | _]), do: "WPA-PSK"
   defp flags_to_security([:wpa2_eap_ccmp | _]), do: "WPA-EAP"
+  defp flags_to_security([:wpa_eap_ccmp_tkip | _]), do: "WPA-EAP"
   defp flags_to_security([_ | rest]), do: flags_to_security(rest)
   defp flags_to_security([]), do: "NONE"
 end

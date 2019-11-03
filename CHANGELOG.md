@@ -1,6 +1,12 @@
 # Changelog
 
-# 8.1.0
+# 8.2.0
+* Features
+    * Add telemetry to app. Telemetry data is now streamed to AMQP
+    * Add log messages containing iteration context for looped sequences and events
+    * Add support for EAP networks back
+
+# 8.1.1
 * Bug fixes
     * Fix bug where farmbot could not execute the following commands
         * home
