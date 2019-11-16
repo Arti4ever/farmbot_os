@@ -1,5 +1,16 @@
 # Changelog
 
+# 8.2.3
+* Features
+    * Farmbot will now check for an hour in which to apply over the air updates
+* Bug fixes
+    * `take-photo` will now send a log
+    * having multiple instances of the app open won't cause sync errors
+
+# 8.2.2
+* Bug fixes
+    * Fix race condition in executing farmwares
+
 # 8.2.1
 * Features
     * Add timer to reset `firmware_input_log` and `firmware_output_log` after 5 minutes
