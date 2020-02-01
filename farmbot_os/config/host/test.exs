@@ -22,14 +22,18 @@ config :farmbot_core, FarmbotCore.Asset.Repo,
   database: Path.join(data_path, "asset-#{Mix.env()}.sqlite3")
 
 config :farmbot,
-  ecto_repos: [FarmbotCore.Config.Repo, FarmbotCore.Logger.Repo, FarmbotCore.Asset.Repo],
+  ecto_repos: [
+    FarmbotCore.Config.Repo,
+    FarmbotCore.Logger.Repo,
+    FarmbotCore.Asset.Repo
+  ],
   platform_children: [
     {Farmbot.Platform.Host.Configurator, []}
   ]
 
 config :farmbot, FarmbotOS.Configurator,
-  data_layer: FarmbotTest.Configurator.MockDataLayer,
-  network_layer: FarmbotTest.Configurator.MockNetworkLayer
+  data_layer: FarmbotOS.Configurator.ConfigDataLayer,
+  network_layer: FarmbotOS.Configurator.FakeNetworkLayer
 
 config :farmbot_core, FarmbotCore.FirmwareTTYDetector, expected_names: []
 
@@ -39,3 +43,4 @@ config :farmbot_core, FarmbotCore.AssetWorker.FarmbotCore.Asset.FbosConfig,
   firmware_flash_attempt_threshold: 0
 
 config :plug, :validate_header_keys_during_test, true
+config :farmbot, :muon_trap_adapter, Avrdude.MuonTrapTestAdapter
