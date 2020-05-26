@@ -43,6 +43,15 @@ defmodule FarmbotCore.FirmwareTTYDetector do
 
   def handle_info(:timeout, state) do
     enumerated = UART.enumerate() |> Map.to_list()
+    # now we want to put the ttyAMA0 (if any) at the end of the list
+    enumerated =
+      if List.keymember?(enumerated,"ttyAMA0",0) do
+        ttyserial = List.keyfind(enumerated,"ttyAMA0",0)
+        enumerated = List.delete(enumerated, ttyserial)
+        enumerated ++ ttyserial
+      else
+        enumerated
+      end
     {:noreply, state, {:continue, enumerated}}
   end
 
